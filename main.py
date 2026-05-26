@@ -1,5 +1,4 @@
-import os, re, json, queue, threading, time
-import pandas as pd
+import os, re, json, time
 import spotipy
 from flask import Flask, redirect, request, session, Response, render_template_string, jsonify
 from spotipy.oauth2 import SpotifyOAuth
@@ -8,16 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
 
-CLIENT_ID     = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REDIRECT_URI  = "http://127.0.0.1:5000/callback"
-SCOPE         = "playlist-read-private playlist-read-collaborative"
-
-# fila de progresso por session_id
-progress_queues: dict[str, queue.Queue] = {}
-tracks_store:   dict[str, list]         = {}
+CLIENT_ID    = os.getenv("CLIENT_ID")
+CLIENT_SECRET= os.getenv("CLIENT_SECRET")
+REDIRECT_URI = os.getenv("REDIRECT_URI", "http://127.0.0.1:5000/callback")
+SCOPE        = "playlist-read-private playlist-read-collaborative"
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -36,34 +31,75 @@ def make_auth_manager(state=None):
 def slug(s):
     return re.sub(r"[^a-z0-9]", "_", s.lower())
 
-CACHE_DIR = "cache"
-os.makedirs(CACHE_DIR, exist_ok=True)
+def spotify_call(func, *args, **kwargs):
+    """Retry automático em rate limit."""
+    while True:
+        try:
+            return func(*args, **kwargs)
+        except spotipy.exceptions.SpotifyException as e:
+            if e.http_status == 429:
+                retry_after = int(e.headers.get("Retry-After", 5)) + 1
+                print(f"[RATE LIMIT] aguardando {retry_after}s...", flush=True)
+                time.sleep(retry_after)
+            else:
+                raise
 
-def cache_path(sid):
-    return os.path.join(CACHE_DIR, f"{sid}.json")
+def collect_tracks(access_token, user_id):
+    """
+    Coleta todas as músicas das playlists do usuário.
+    Roda de forma SÍNCRONA — retorna a lista quando terminar.
+    """
+    sp = spotipy.Spotify(auth=access_token)
+    playlists_res = spotify_call(sp.current_user_playlists, limit=50)
+    all_playlists = list(playlists_res["items"])
+    while playlists_res["next"]:
+        playlists_res = spotify_call(sp.next, playlists_res)
+        all_playlists.extend(playlists_res["items"])
 
-def save_cache(sid, tracks, display_name):
-    import datetime
-    data = {
-        "display_name": display_name,
-        "saved_at": datetime.datetime.utcnow().isoformat(),
-        "tracks": tracks,
-    }
-    with open(cache_path(sid), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-    print(f"[CACHE] Salvo {len(tracks)} músicas em {cache_path(sid)}", flush=True)
+    own = [p for p in all_playlists if p["owner"]["id"] == user_id]
+    print(f"[COLLECT] {len(own)} playlists proprias encontradas", flush=True)
 
-def load_cache(sid):
-    path = cache_path(sid)
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    print(f"[CACHE] Carregado {len(data['tracks'])} músicas de {path}", flush=True)
-    return data
+    songs = []
+    for pl in own:
+        print(f"[COLLECT] coletando: {pl['name']}", flush=True)
+        try:
+            offset = 0
+            while True:
+                items = spotify_call(sp.playlist_items, pl["id"], offset=offset, limit=100)
+                for item in items["items"]:
+                    try:
+                        if item is None:
+                            continue
+                        t = item.get("item") or item.get("track")
+                        if not t or t.get("is_local") or not t.get("id"):
+                            continue
+                        imgs = (t.get("album") or {}).get("images") or []
+                        if not imgs:
+                            continue
+                        songs.append({
+                            "id":       len(songs) + 1,
+                            "name":     t.get("name", ""),
+                            "artists":  ", ".join(dict.fromkeys(
+                                            a["name"] for a in (t.get("artists") or [])
+                                        )),
+                            "playlist": pl["name"],
+                            "added_at": item.get("added_at") or "",
+                            "url_song": (t.get("external_urls") or {}).get("spotify", ""),
+                            "image":    imgs[1]["url"] if len(imgs) > 1 else imgs[0]["url"],
+                        })
+                    except Exception as e:
+                        print(f"[ITEM_ERR] {e}", flush=True)
+                if not items["next"]:
+                    break
+                offset += 100
+        except Exception as e:
+            print(f"[PL_ERR] {pl['name']}: {e}", flush=True)
+
+    print(f"[COLLECT] total: {len(songs)} músicas", flush=True)
+    return songs
 
 # ─────────────────────────────────────────────
-# ROTA: página inicial / login
+# PÁGINA: login
 # ─────────────────────────────────────────────
 PAGE_LOGIN = """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -96,177 +132,16 @@ p{font-size:13px;color:#aaa;line-height:1.6;margin-bottom:32px}
   <p>Veja quais músicas você adicionou hoje em anos anteriores.<br>
      Conecte sua conta do Spotify para começar.</p>
   <a class="btn" href="/login"><i class="ti ti-brand-spotify"></i> Entrar com Spotify</a>
-  <div class="footer">Seus dados ficam apenas nesta sessão.</div>
+  <div class="footer">Seus dados ficam apenas no seu navegador.</div>
 </div>
 </body>
 </html>"""
 
-@app.route("/")
-def index():
-    return render_template_string(PAGE_LOGIN)
-
 # ─────────────────────────────────────────────
-# ROTA: inicia OAuth
+# PÁGINA: coletando (loading)
+# Mostrada enquanto o backend coleta — faz polling em /api/status
 # ─────────────────────────────────────────────
-@app.route("/login")
-def login():
-    auth = make_auth_manager()
-    url  = auth.get_authorize_url()
-    # salva code_verifier / state se necessário
-    session["auth_state"] = auth.state
-    return redirect(url)
-
-# ─────────────────────────────────────────────
-# ROTA: callback OAuth
-# ─────────────────────────────────────────────
-@app.route("/callback")
-def callback():
-    code  = request.args.get("code")
-    error = request.args.get("error")
-    if error:
-        return f"<h2>Erro de autorizacao: {error}</h2><a href='/'>Voltar</a>"
-    if not code:
-        return "<h2>Codigo de autorizacao ausente.</h2><a href='/'>Voltar</a>"
-
-    auth         = make_auth_manager(state=session.get("auth_state"))
-    token_info   = auth.get_access_token(code, as_dict=True, check_cache=False)
-    access_token = token_info["access_token"]
-
-    sp   = spotipy.Spotify(auth=access_token)
-    user = sp.current_user()
-    session["display_name"] = user["display_name"]
-    session["user_id"]      = user["id"]
-    sid = slug(user["id"])
-    session["sid"]   = sid
-    session["token"] = access_token
-
-    # verifica se já tem cache salvo para este usuário
-    cached = load_cache(sid)
-    if cached:
-        tracks_store[sid] = cached["tracks"]
-        session["cache_saved_at"] = cached.get("saved_at", "")
-        return redirect("/calendar")
-
-    progress_queues[sid] = queue.Queue()
-    tracks_store[sid]    = None  # marca como "em andamento"
-
-    threading.Thread(
-        target=collect_tracks,
-        args=(access_token, sid, user["display_name"]),
-        daemon=True
-    ).start()
-    return redirect("/progress")
-
-# ─────────────────────────────────────────────
-# COLETA (roda em thread)
-# ─────────────────────────────────────────────
-def push(sid, msg_type, payload):
-    msg = {"type": msg_type, **payload}
-    print(f"[{msg_type.upper()}] {payload}", flush=True)
-    if sid in progress_queues:
-        progress_queues[sid].put(msg)
-
-def spotify_call(func, *args, sid=None, **kwargs):
-    """Chama qualquer função do spotipy com retry automático em rate limit."""
-    while True:
-        try:
-            return func(*args, **kwargs)
-        except spotipy.exceptions.SpotifyException as e:
-            if e.http_status == 429:
-                retry_after = int(e.headers.get("Retry-After", 5)) + 1
-                print(f"[RATE LIMIT] aguardando {retry_after}s...", flush=True)
-                if sid:
-                    push(sid, "warn", {"text": f"⏳ Rate limit do Spotify — aguardando {retry_after}s e continuando..."})
-                time.sleep(retry_after)
-            else:
-                raise
-
-def collect_tracks(access_token, sid, display_name):
-    try:
-        sp = spotipy.Spotify(auth=access_token)
-        push(sid, "status", {"text": f"Conectado como {display_name}"})
-
-        # usa o user_id real para filtrar playlists (mais confiavel que display_name)
-        user_id = spotify_call(sp.current_user, sid=sid)["id"]
-
-        playlists_res = spotify_call(sp.current_user_playlists, limit=50, sid=sid)
-        all_playlists = list(playlists_res["items"])
-        while playlists_res["next"]:
-            playlists_res = spotify_call(sp.next, playlists_res, sid=sid)
-            all_playlists.extend(playlists_res["items"])
-
-        push(sid, "status", {"text": f"{len(all_playlists)} playlists encontradas, filtrando as suas..."})
-
-        # filtra por owner id (nao display_name, que pode divergir)
-        own = [p for p in all_playlists if p["owner"]["id"] == user_id]
-        total_pl = len(own)
-        push(sid, "status", {"text": f"{total_pl} playlists suas encontradas"})
-
-        if total_pl == 0:
-            push(sid, "warn", {"text": "Nenhuma playlist propria encontrada."})
-
-        songs = []
-        for i, pl in enumerate(own, 1):
-            push(sid, "playlist", {
-                "name":    pl["name"],
-                "index":   i,
-                "total":   total_pl,
-                "percent": round(i / total_pl * 100),
-            })
-            try:
-                offset = 0
-                while True:
-                    items = spotify_call(sp.playlist_items, pl["id"], offset=offset, limit=100, sid=sid)
-                    for item in items["items"]:
-                        try:
-                            if item is None:
-                                continue
-                            # endpoint playlist_items retorna item["item"], nao item["track"]
-                            t = item.get("item") or item.get("track")
-                            if t is None:
-                                continue
-                            if t.get("is_local") or not t.get("id"):
-                                continue
-                            album = t.get("album") or {}
-                            imgs  = album.get("images") or []
-                            if not imgs:
-                                continue
-                            added_at = item.get("added_at") or ""
-                            songs.append({
-                                "id":       len(songs) + 1,
-                                "name":     t.get("name", "Desconhecido"),
-                                "artists":  ", ".join(dict.fromkeys(
-                                                a["name"] for a in (t.get("artists") or [])
-                                            )) or "Desconhecido",
-                                "playlist": pl["name"],
-                                "added_at": added_at,
-                                "url_song": (t.get("external_urls") or {}).get("spotify", ""),
-                                "image":    imgs[1]["url"] if len(imgs) > 1 else imgs[0]["url"],
-                            })
-                        except Exception as item_err:
-                            import traceback
-                            err_detail = traceback.format_exc()
-                            print(f"[ITEM_ERR] playlist={pl['name']} erro={item_err}\n{err_detail}", flush=True)
-                            push(sid, "warn", {"text": f"Item ignorado ({pl['name']}): {item_err}"})
-                    if not items["next"]:
-                        break
-                    offset += 100
-            except Exception as e:
-                import traceback
-                push(sid, "warn", {"text": f"Erro em '{pl['name']}': {e} | {traceback.format_exc()}"})
-
-        tracks_store[sid] = songs
-        save_cache(sid, songs, display_name)
-        push(sid, "done", {"total": len(songs)})
-    except Exception as e:
-        import traceback
-        push(sid, "error", {"text": str(e) + "\n" + traceback.format_exc()})
-        tracks_store[sid] = []
-
-# ─────────────────────────────────────────────
-# ROTA: tela de progresso
-# ─────────────────────────────────────────────
-PAGE_PROGRESS = """<!DOCTYPE html>
+PAGE_LOADING = """<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
@@ -277,136 +152,88 @@ PAGE_PROGRESS = """<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f0;
      min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{background:#272626;border:1px solid #333;border-radius:20px;padding:40px 36px;
-      max-width:480px;width:92%}
-.top{display:flex;align-items:center;gap:12px;margin-bottom:28px}
-.logo{color:#1DB954;font-size:32px}
-h1{font-size:18px;font-weight:700;color:#fff}
-.sub{font-size:12px;color:#aaa;margin-top:2px}
-
-.bar-wrap{background:#1a1a1a;border-radius:50px;height:8px;overflow:hidden;margin-bottom:10px}
-.bar{height:100%;background:#1DB954;border-radius:50px;width:0%;transition:width .4s ease}
-
-.pl-name{font-size:13px;color:#ddd;margin-bottom:20px;min-height:18px;
-         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pl-name span{color:#1DB954;font-weight:600}
-
-.log{background:#1a1a1a;border-radius:10px;padding:12px 14px;max-height:160px;
-     overflow-y:auto;font-size:11px;color:#777;line-height:1.7;
-     scrollbar-width:thin;scrollbar-color:#333 transparent}
-.log .ok{color:#1DB954}
-.log .warn{color:#e6a817}
-.log .err{color:#e05c5c}
-
-.done-block{display:none;text-align:center;margin-top:24px}
-.done-block p{font-size:13px;color:#aaa;margin-bottom:16px}
-.btn{display:inline-flex;align-items:center;gap:8px;background:#1DB954;color:#000;
-     font-weight:700;font-size:14px;border:none;border-radius:50px;padding:13px 28px;
-     cursor:pointer;text-decoration:none;transition:background .15s,transform .1s}
-.btn:hover{background:#1ed760;transform:scale(1.03)}
+.card{background:#272626;border:1px solid #333;border-radius:20px;padding:48px 40px;
+      max-width:420px;width:90%;text-align:center}
+.logo{color:#1DB954;font-size:44px;margin-bottom:20px;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+h1{font-size:20px;font-weight:700;color:#fff;margin-bottom:8px}
+.sub{font-size:13px;color:#aaa;margin-bottom:28px;line-height:1.6}
+.bar-wrap{background:#1a1a1a;border-radius:50px;height:6px;overflow:hidden;margin-bottom:20px}
+.bar{height:100%;background:#1DB954;border-radius:50px;width:5%;
+     animation:indeterminate 1.4s ease-in-out infinite}
+@keyframes indeterminate{
+  0%{width:5%;margin-left:0}
+  50%{width:40%;margin-left:30%}
+  100%{width:5%;margin-left:95%}
+}
+.status{font-size:12px;color:#666;min-height:18px}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="top">
-    <i class="ti ti-brand-spotify logo"></i>
-    <div>
-      <h1>Coletando suas músicas</h1>
-      <div class="sub" id="status-text">Aguardando…</div>
-    </div>
-  </div>
-
-  <div class="bar-wrap"><div class="bar" id="bar"></div></div>
-  <div class="pl-name" id="pl-name">iniciando…</div>
-
-  <div class="log" id="log"></div>
-
-  <div class="done-block" id="done-block">
-    <p id="done-msg"></p>
-    <a class="btn" href="/calendar"><i class="ti ti-calendar"></i> Ver meu calendário</a>
-  </div>
+  <div class="logo"><i class="ti ti-brand-spotify"></i></div>
+  <h1>Coletando suas músicas</h1>
+  <div class="sub">Estamos lendo todas as suas playlists do Spotify.<br>Isso pode levar alguns segundos.</div>
+  <div class="bar-wrap"><div class="bar"></div></div>
+  <div class="status" id="status">Aguardando...</div>
 </div>
-
 <script>
-const bar      = document.getElementById('bar');
-const plName   = document.getElementById('pl-name');
-const statusTx = document.getElementById('status-text');
-const logEl    = document.getElementById('log');
-const doneBlk  = document.getElementById('done-block');
-const doneMsg  = document.getElementById('done-msg');
+const USER_ID = '{{ user_id }}';
+const LS_KEY  = 'spotify_cal_' + USER_ID;
+const FORCE   = '{{ force }}' === 'true';
 
-function addLog(text, cls) {
-  const d = document.createElement('div');
-  if (cls) d.className = cls;
-  d.textContent = text;
-  logEl.appendChild(d);
-  logEl.scrollTop = logEl.scrollHeight;
+function hasLocalCache() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    return data && data.tracks && data.tracks.length > 0;
+  } catch(e) { return false; }
 }
 
-const es = new EventSource('/stream');
-es.onmessage = e => {
-  const msg = JSON.parse(e.data);
+function doCollect() {
+  document.getElementById('status').textContent = 'Conectando ao Spotify...';
+  fetch('/api/collect', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        document.getElementById('status').textContent = 'Erro: ' + data.error;
+      } else {
+        // Salva as tracks no localStorage aqui — servidor não guarda nada
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify({
+            user_id:  USER_ID,
+            saved_at: new Date().toISOString(),
+            tracks:   data.tracks,
+          }));
+          console.log('[LS] Salvo', data.total, 'músicas');
+        } catch(e) {
+          console.warn('[LS] Erro ao salvar no localStorage:', e);
+        }
+        document.getElementById('status').textContent = data.total + ' músicas salvas!';
+        window.location.href = '/calendar';
+      }
+    })
+    .catch(() => {
+      document.getElementById('status').textContent = 'Erro de conexão. Tente novamente.';
+    });
+}
 
-  if (msg.type === 'status') {
-    statusTx.textContent = msg.text;
-    addLog('ℹ ' + msg.text);
-  }
-  else if (msg.type === 'playlist') {
-    bar.style.width = msg.percent + '%';
-    plName.innerHTML = `Playlist <span>${msg.name}</span> — ${msg.index} de ${msg.total}`;
-    addLog(`📂 ${msg.name}`);
-  }
-  else if (msg.type === 'warn') {
-    addLog('⚠ ' + msg.text, 'warn');
-  }
-  else if (msg.type === 'error') {
-    addLog('✗ ' + msg.text, 'err');
-    statusTx.textContent = 'Erro na coleta.';
-    es.close();
-  }
-  else if (msg.type === 'done') {
-    bar.style.width = '100%';
-    plName.innerHTML = '<span>Coleta concluída!</span>';
-    doneMsg.textContent = msg.total + ' músicas coletadas no total.';
-    doneBlk.style.display = 'block';
-    addLog('✓ Concluído — ' + msg.total + ' músicas', 'ok');
-    es.close();
-  }
-};
+// Se já tem cache local e não é um refresh forçado, vai direto pro calendário
+if (!FORCE && hasLocalCache()) {
+  document.getElementById('status').textContent = 'Cache encontrado, carregando...';
+  window.location.href = '/calendar';
+} else {
+  doCollect();
+}
 </script>
 </body>
 </html>"""
 
-@app.route("/progress")
-def progress():
-    if "sid" not in session:
-        return redirect("/")
-    return render_template_string(PAGE_PROGRESS)
-
 # ─────────────────────────────────────────────
-# ROTA: SSE stream de progresso
-# ─────────────────────────────────────────────
-@app.route("/stream")
-def stream():
-    sid = session.get("sid")
-    if not sid or sid not in progress_queues:
-        return Response("data: {}\n\n", mimetype="text/event-stream")
-
-    def generate():
-        q = progress_queues[sid]
-        while True:
-            try:
-                msg = q.get(timeout=30)
-                yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-                if msg["type"] in ("done", "error"):
-                    break
-            except queue.Empty:
-                yield "data: {\"type\":\"ping\"}\n\n"
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-# ─────────────────────────────────────────────
-# ROTA: calendário
+# PÁGINA: calendário
+# Recebe tracks_json do servidor UMA VEZ,
+# salva no localStorage e usa de lá em diante
 # ─────────────────────────────────────────────
 CALENDAR_TEMPLATE = """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -424,6 +251,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
 .brand{color:#1DB954;font-size:22px}
 .label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#aaa;margin-bottom:2px}
 .user-name{font-size:11px;color:#1DB954;margin-top:1px;font-weight:600}
+.cache-info{font-size:10px;color:#555;margin-top:1px}
 .month-name{font-size:24px;font-weight:700;color:#fff;line-height:1}
 .nav{display:flex;align-items:center;gap:6px}
 .nav-btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#ddd;width:34px;height:34px;
@@ -434,11 +262,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
            border-radius:8px;cursor:pointer;font-size:11px;letter-spacing:.08em;
            text-transform:uppercase;transition:background .15s,color .15s}
 .nav-today:hover{background:#333;color:#fff}
-.btn-logout,.btn-refresh{background:none;border:1px solid #3a3a3a;color:#888;height:34px;padding:0 12px;
+.btn-action{background:none;border:1px solid #3a3a3a;color:#888;height:34px;padding:0 12px;
             border-radius:8px;cursor:pointer;font-size:11px;text-decoration:none;
             display:flex;align-items:center;gap:5px;transition:border-color .15s,color .15s}
-.btn-logout:hover{border-color:#e05c5c;color:#e05c5c}
-.btn-refresh:hover{border-color:#1DB954;color:#1DB954}
+.btn-action.refresh:hover{border-color:#1DB954;color:#1DB954}
+.btn-action.logout:hover{border-color:#e05c5c;color:#e05c5c}
 .legend{font-size:11px;color:#ccc;letter-spacing:.04em}
 .weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:5px;flex-shrink:0}
 .wd{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#aaa;text-align:center;padding:4px 0}
@@ -511,7 +339,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
     <i class="ti ti-brand-spotify brand"></i>
     <div>
       <div class="label">memórias musicais</div>
-      <div class="user-name">{{ display_name }}{% if cache_saved_at %} · <span style="color:#555;font-weight:400">cache de {{ cache_saved_at }}</span>{% endif %}</div>
+      <div class="user-name" id="hdr-user">—</div>
+      <div class="cache-info" id="hdr-cache"></div>
       <div class="month-name" id="month-name">—</div>
     </div>
   </div>
@@ -524,8 +353,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
       <button class="nav-btn" id="next-month" title="Próximo mês"><i class="ti ti-chevron-right"></i></button>
       <button class="nav-btn" id="next-year"  title="Próximo ano"><i class="ti ti-chevrons-right"></i></button>
     </div>
-    <a class="btn-refresh" href="/refresh" title="Forçar nova coleta do Spotify"><i class="ti ti-refresh"></i> Atualizar</a>
-    <a class="btn-logout" href="/logout"><i class="ti ti-logout"></i> Sair</a>
+    <a class="btn-action refresh" href="/refresh" title="Recolher dados do Spotify"><i class="ti ti-refresh"></i> Atualizar</a>
+    <a class="btn-action logout"  href="/logout"><i class="ti ti-logout"></i> Sair</a>
   </div>
 </div>
 
@@ -547,11 +376,74 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
 <div class="tooltip" id="global-tooltip"></div>
 
 <script>
-const TRACKS = {{ tracks_json | safe }};
-const MESES  = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-                'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+// ── localStorage helpers ──────────────────────────────────────────
+const LS_KEY = 'spotify_cal_{{ user_id }}';
+
+function lsSave(data) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(data));
+    console.log('[LS] Salvo', data.tracks.length, 'músicas no localStorage');
+  } catch(e) {
+    console.warn('[LS] Erro ao salvar:', e);
+  }
+}
+
+function lsLoad() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
+function lsClear() {
+  localStorage.removeItem(LS_KEY);
+}
+
+// ── Carrega os dados ──────────────────────────────────────────────
+// O servidor injeta tracks_json apenas quando vem de coleta nova.
+// Se vier null, tenta o localStorage.
+const SERVER_TRACKS = {{ tracks_json | safe }};
+const USER_ID       = '{{ user_id }}';
+const DISPLAY_NAME  = '{{ display_name }}';
+
+let TRACKS = [];
+let cacheInfo = '';
+
+if (SERVER_TRACKS !== null) {
+  // Veio do servidor (coleta nova ou refresh) → salva no localStorage
+  const payload = {
+    user_id:    USER_ID,
+    saved_at:   new Date().toISOString(),
+    tracks:     SERVER_TRACKS,
+  };
+  lsSave(payload);
+  TRACKS    = SERVER_TRACKS;
+  cacheInfo = 'dados atualizados agora';
+} else {
+  // Tenta carregar do localStorage
+  const cached = lsLoad();
+  if (cached && cached.tracks && cached.tracks.length > 0) {
+    TRACKS    = cached.tracks;
+    const dt  = new Date(cached.saved_at);
+    cacheInfo = 'cache de ' + dt.toLocaleDateString('pt-BR') + ' ' + dt.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+  } else {
+    // Não tem nem no servidor nem no localStorage → força recoleta
+    console.warn('[LS] Sem dados locais, redirecionando para recoleta...');
+    window.location.href = '/refresh';
+  }
+}
+
+document.getElementById('hdr-user').textContent  = DISPLAY_NAME;
+document.getElementById('hdr-cache').textContent = cacheInfo;
+
+// ── Calendário ────────────────────────────────────────────────────
+const MESES   = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                 'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const nowReal = new Date();
-let curYear = nowReal.getFullYear(), curMonth = nowReal.getMonth();
+let curYear   = nowReal.getFullYear();
+let curMonth  = nowReal.getMonth();
 const tooltip = document.getElementById('global-tooltip');
 
 const ALL_YEARS = [...new Set(TRACKS.map(t => new Date(t.added_at).getUTCFullYear()))];
@@ -563,7 +455,7 @@ function yearColor(year) {
   const t = (year - MIN_YEAR) / (MAX_YEAR - MIN_YEAR);
   let r,g,b;
   if (t < .5) { const tt=t/.5; r=220; g=Math.round(80+tt*140); b=30; }
-  else         { const tt=(t-.5)/.5; r=Math.round(220-tt*160); g=Math.round(220-tt*90); b=Math.round(30+tt*210); }
+  else { const tt=(t-.5)/.5; r=Math.round(220-tt*160); g=Math.round(220-tt*90); b=Math.round(30+tt*210); }
   return {bg:`rgba(${r},${g},${b},.18)`,text:`rgb(${r},${g},${b})`};
 }
 function yearBadge(year, cls) {
@@ -573,6 +465,7 @@ function yearBadge(year, cls) {
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric',timeZone:'UTC'});
 }
+
 function showTooltip(el, s) {
   tooltip.innerHTML = `
     <img class="tooltip-img" src="${s.image}" alt="${s.name}">
@@ -619,7 +512,9 @@ function openModal(day, songs) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 document.getElementById('modal-close').addEventListener('click',()=>document.getElementById('modal-overlay').classList.remove('open'));
-document.getElementById('modal-overlay').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-overlay')) document.getElementById('modal-overlay').classList.remove('open'); });
+document.getElementById('modal-overlay').addEventListener('click',e=>{
+  if(e.target===document.getElementById('modal-overlay')) document.getElementById('modal-overlay').classList.remove('open');
+});
 
 const MAX_VISIBLE=6;
 function getCols(n){ const s=Math.min(n,MAX_VISIBLE); if(s===1)return 1; if(s<=4)return 2; return 3; }
@@ -662,7 +557,7 @@ function buildCalendar() {
       });
       if(hasMore){
         const more=document.createElement('button'); more.className='more-btn';
-        more.textContent='+' +(songs.length-showImgs);
+        more.textContent='+'+(songs.length-showImgs);
         more.addEventListener('click',ev=>{ev.stopPropagation();openModal(d,songs);});
         covers.appendChild(more);
       }
@@ -685,156 +580,123 @@ buildCalendar();
 </body>
 </html>"""
 
-@app.route("/calendar")
-def calendar():
-    sid = session.get("sid")
-    if not sid or sid not in tracks_store:
+# ─────────────────────────────────────────────
+# ROTAS
+# ─────────────────────────────────────────────
+@app.route("/")
+def index():
+    return render_template_string(PAGE_LOGIN)
+
+@app.route("/login")
+def login():
+    auth = make_auth_manager()
+    session["auth_state"] = auth.state
+    return redirect(auth.get_authorize_url())
+
+@app.route("/callback")
+def callback():
+    error = request.args.get("error")
+    code  = request.args.get("code")
+    if error:
+        return f"<h2>Erro: {error}</h2><a href='/'>Voltar</a>"
+    if not code:
+        return "<h2>Código ausente.</h2><a href='/'>Voltar</a>"
+
+    auth         = make_auth_manager(state=session.get("auth_state"))
+    token_info   = auth.get_access_token(code, as_dict=True, check_cache=False)
+    access_token = token_info["access_token"]
+
+    sp   = spotipy.Spotify(auth=access_token)
+    user = sp.current_user()
+
+    session["display_name"] = user["display_name"]
+    session["user_id"]      = user["id"]
+    session["token"]        = access_token
+    session["collecting"]   = False
+    session["collect_done"] = False
+    session["collect_error"]= ""
+
+    # Vai para o loading — que fará polling em /api/status
+    # A coleta começa quando o browser chama /api/collect
+    return redirect("/loading")
+
+@app.route("/loading")
+def loading():
+    if "user_id" not in session:
         return redirect("/")
-    tracks = tracks_store[sid]
-
-    if tracks is None:
-        return redirect("/progress")  # ainda coletando
-
-    if len(tracks) == 0:
-        return render_template_string("""<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8">
-<title>Erro</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',sans-serif;background:#1f1e1e;
-color:#f0f0f0;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{background:#272626;border:1px solid #3a3a3a;border-radius:20px;padding:40px;max-width:420px;
-width:90%;text-align:center}.icon{font-size:48px;color:#e05c5c;margin-bottom:16px}
-h2{font-size:18px;font-weight:700;color:#fff;margin-bottom:10px}
-p{font-size:13px;color:#aaa;line-height:1.6;margin-bottom:24px}
-.btn{display:inline-flex;align-items:center;gap:8px;background:#1DB954;color:#000;
-font-weight:700;font-size:13px;border-radius:50px;padding:12px 24px;text-decoration:none;
-transition:background .15s}.btn:hover{background:#1ed760}</style></head>
-<body><div class="card"><div class="icon"><i class="ti ti-alert-circle"></i></div>
-<h2>Nenhuma música coletada</h2>
-<p>Pode ter ocorrido um erro durante a coleta ou suas playlists estão vazias.<br>
-Tente fazer login novamente.</p>
-<a class="btn" href="/logout"><i class="ti ti-refresh"></i> Tentar novamente</a>
-</div></body></html>""")
-
-    df = pd.DataFrame(tracks)
-    df["added_at"] = pd.to_datetime(df["added_at"], utc=True).dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    tracks_json = json.dumps(df.to_dict(orient="records"), ensure_ascii=False)
-    import datetime
-    saved_at_raw = session.get("cache_saved_at", "")
-    saved_at_fmt = ""
-    if saved_at_raw:
-        try:
-            dt = datetime.datetime.fromisoformat(saved_at_raw)
-            saved_at_fmt = dt.strftime("%d/%m/%Y %H:%M")
-        except Exception:
-            pass
-
-    return render_template_string(
-        CALENDAR_TEMPLATE,
-        tracks_json=tracks_json,
-        display_name=session.get("display_name", ""),
-        cache_saved_at=saved_at_fmt,
+    force = session.pop("force_collect", False)
+    return render_template_string(PAGE_LOADING,
+        user_id=session.get("user_id", ""),
+        force="true" if force else "false",
     )
 
-# ─────────────────────────────────────────────
-# ROTA: logout
-# ─────────────────────────────────────────────
+@app.route("/api/collect", methods=["POST"])
+def api_collect():
+    """
+    Inicia a coleta de forma síncrona.
+    Chamado via fetch() pelo polling da página de loading.
+    Bloqueia até terminar e salva o resultado na sessão.
+    """
+    if "user_id" not in session:
+        return jsonify({"error": "não autenticado"}), 401
+
+    access_token = session.get("token")
+    user_id      = session["user_id"]
+
+    try:
+        tracks = collect_tracks(access_token, user_id)
+        # NÃO salva na sessão — retorna direto no body da resposta
+        # o JavaScript recebe e salva no localStorage
+        session["collect_done"]  = True
+        session["collect_error"] = ""
+        return jsonify({"ok": True, "total": len(tracks), "tracks": tracks})
+    except Exception as e:
+        import traceback
+        session["collect_error"] = str(e)
+        session["collect_done"]  = True
+        print(traceback.format_exc(), flush=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/status")
+def api_status():
+    """Polling: retorna se a coleta terminou."""
+    if "user_id" not in session:
+        return jsonify({"error": "não autenticado"})
+    if session.get("collect_error"):
+        return jsonify({"error": session["collect_error"]})
+    if session.get("collect_done"):
+        return jsonify({"ready": True, "message": f"{len(session.get('tracks', []))} músicas coletadas"})
+    return jsonify({"ready": False, "message": "coletando..."})
+
+@app.route("/calendar")
+def calendar():
+    if "user_id" not in session:
+        return redirect("/")
+    # Tracks nunca ficam no servidor — o JS sempre lê do localStorage
+    # tracks_json = null sinaliza pro JS carregar do localStorage
+    return render_template_string(
+        CALENDAR_TEMPLATE,
+        tracks_json="null",
+        user_id=session.get("user_id", ""),
+        display_name=session.get("display_name", ""),
+    )
+
 @app.route("/refresh")
 def refresh():
-    """Apaga o cache e força nova coleta."""
-    sid = session.get("sid")
-    if sid:
-        path = cache_path(sid)
-        if os.path.exists(path):
-            os.remove(path)
-            print(f"[CACHE] Removido {path}", flush=True)
-        tracks_store.pop(sid, None)
-        progress_queues.pop(sid, None)
-    # mantém a sessão mas força nova coleta
-    access_token = session.get("token")
-    if not access_token:
-        return redirect("/")
-    sp   = spotipy.Spotify(auth=access_token)
-    try:
-        user = sp.current_user()
-    except Exception:
-        return redirect("/logout")
-    progress_queues[sid] = queue.Queue()
-    tracks_store[sid]    = None
-    threading.Thread(
-        target=collect_tracks,
-        args=(access_token, sid, session.get("display_name", "")),
-        daemon=True
-    ).start()
-    return redirect("/progress")
+    """Força nova coleta ignorando o localStorage."""
+    session["collect_done"]   = False
+    session["collect_error"]  = ""
+    session["force_collect"]  = True
+    session.pop("tracks", None)
+    return redirect("/loading")
 
 @app.route("/logout")
 def logout():
-    sid = session.get("sid")
-    if sid:
-        tracks_store.pop(sid, None)
-        progress_queues.pop(sid, None)
     session.clear()
-    return redirect("/")
-
-@app.route("/debug/tracks")
-def debug_tracks():
-    """Mostra as primeiras músicas e quantas batem com o mês/dia atual."""
-    import datetime
-    sid = session.get("sid")
-    if not sid or sid not in tracks_store:
-        return jsonify({"error": "sem dados"})
-    tracks = tracks_store[sid] or []
-    now = datetime.datetime.utcnow()
-    cur_month = now.month - 1  # JS usa 0-indexed
-    cur_year  = now.year
-
-    matches = []
-    for t in tracks:
-        added = t.get("added_at", "")
-        try:
-            d = datetime.datetime.fromisoformat(added.replace("Z", "+00:00"))
-            if d.month - 1 == cur_month and d.year != cur_year:
-                matches.append({
-                    "name":     t["name"],
-                    "added_at": added,
-                    "month":    d.month,
-                    "day":      d.day,
-                    "year":     d.year,
-                })
-        except Exception as e:
-            pass
-
-    return jsonify({
-        "cur_month_js": cur_month,
-        "cur_year":     cur_year,
-        "total_tracks": len(tracks),
-        "matches_this_month": len(matches),
-        "sample_matches": matches[:10],
-        "sample_added_at": [t.get("added_at") for t in tracks[:5]],
-    })
-
-@app.route("/debug")
-def debug():
-    sid = session.get("sid")
-    if not sid:
-        return jsonify({"error": "sem sessao ativa"})
-
-    q   = progress_queues.get(sid)
-    tr  = tracks_store.get(sid)
-    msgs = []
-    if q:
-        # drena a fila sem bloquear para ver o que esta la
-        while not q.empty():
-            try: msgs.append(q.get_nowait())
-            except: break
-
-    return jsonify({
-        "sid":            sid,
-        "display_name":   session.get("display_name"),
-        "tracks_count":   len(tr) if isinstance(tr, list) else str(tr),
-        "queue_messages": msgs,
-    })
+    return render_template_string("""<!DOCTYPE html><html><head>
+<script>localStorage.clear(); window.location='/';</script>
+</head></html>""")
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000, threaded=True)
+    debug_mode = os.getenv("FLASK_ENV", "production") == "development"
+    app.run(debug=debug_mode, port=5000, threaded=True)
