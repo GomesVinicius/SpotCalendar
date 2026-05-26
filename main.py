@@ -36,6 +36,32 @@ def make_auth_manager(state=None):
 def slug(s):
     return re.sub(r"[^a-z0-9]", "_", s.lower())
 
+CACHE_DIR = "cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def cache_path(sid):
+    return os.path.join(CACHE_DIR, f"{sid}.json")
+
+def save_cache(sid, tracks, display_name):
+    import datetime
+    data = {
+        "display_name": display_name,
+        "saved_at": datetime.datetime.utcnow().isoformat(),
+        "tracks": tracks,
+    }
+    with open(cache_path(sid), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    print(f"[CACHE] Salvo {len(tracks)} músicas em {cache_path(sid)}", flush=True)
+
+def load_cache(sid):
+    path = cache_path(sid)
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    print(f"[CACHE] Carregado {len(data['tracks'])} músicas de {path}", flush=True)
+    return data
+
 # ─────────────────────────────────────────────
 # ROTA: página inicial / login
 # ─────────────────────────────────────────────
@@ -113,6 +139,13 @@ def callback():
     sid = slug(user["id"])
     session["sid"]   = sid
     session["token"] = access_token
+
+    # verifica se já tem cache salvo para este usuário
+    cached = load_cache(sid)
+    if cached:
+        tracks_store[sid] = cached["tracks"]
+        session["cache_saved_at"] = cached.get("saved_at", "")
+        return redirect("/calendar")
 
     progress_queues[sid] = queue.Queue()
     tracks_store[sid]    = None  # marca como "em andamento"
@@ -223,6 +256,7 @@ def collect_tracks(access_token, sid, display_name):
                 push(sid, "warn", {"text": f"Erro em '{pl['name']}': {e} | {traceback.format_exc()}"})
 
         tracks_store[sid] = songs
+        save_cache(sid, songs, display_name)
         push(sid, "done", {"total": len(songs)})
     except Exception as e:
         import traceback
@@ -400,10 +434,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
            border-radius:8px;cursor:pointer;font-size:11px;letter-spacing:.08em;
            text-transform:uppercase;transition:background .15s,color .15s}
 .nav-today:hover{background:#333;color:#fff}
-.btn-logout{background:none;border:1px solid #3a3a3a;color:#888;height:34px;padding:0 12px;
+.btn-logout,.btn-refresh{background:none;border:1px solid #3a3a3a;color:#888;height:34px;padding:0 12px;
             border-radius:8px;cursor:pointer;font-size:11px;text-decoration:none;
             display:flex;align-items:center;gap:5px;transition:border-color .15s,color .15s}
 .btn-logout:hover{border-color:#e05c5c;color:#e05c5c}
+.btn-refresh:hover{border-color:#1DB954;color:#1DB954}
 .legend{font-size:11px;color:#ccc;letter-spacing:.04em}
 .weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:5px;flex-shrink:0}
 .wd{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#aaa;text-align:center;padding:4px 0}
@@ -476,7 +511,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
     <i class="ti ti-brand-spotify brand"></i>
     <div>
       <div class="label">memórias musicais</div>
-      <div class="user-name">{{ display_name }}</div>
+      <div class="user-name">{{ display_name }}{% if cache_saved_at %} · <span style="color:#555;font-weight:400">cache de {{ cache_saved_at }}</span>{% endif %}</div>
       <div class="month-name" id="month-name">—</div>
     </div>
   </div>
@@ -489,6 +524,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
       <button class="nav-btn" id="next-month" title="Próximo mês"><i class="ti ti-chevron-right"></i></button>
       <button class="nav-btn" id="next-year"  title="Próximo ano"><i class="ti ti-chevrons-right"></i></button>
     </div>
+    <a class="btn-refresh" href="/refresh" title="Forçar nova coleta do Spotify"><i class="ti ti-refresh"></i> Atualizar</a>
     <a class="btn-logout" href="/logout"><i class="ti ti-logout"></i> Sair</a>
   </div>
 </div>
@@ -511,7 +547,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
 <div class="tooltip" id="global-tooltip"></div>
 
 <script>
-const TRACKS = {{ tracks_json }};
+const TRACKS = {{ tracks_json | safe }};
 const MESES  = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                 'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const nowReal = new Date();
@@ -683,15 +719,55 @@ Tente fazer login novamente.</p>
     df = pd.DataFrame(tracks)
     df["added_at"] = pd.to_datetime(df["added_at"], utc=True).dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     tracks_json = json.dumps(df.to_dict(orient="records"), ensure_ascii=False)
+    import datetime
+    saved_at_raw = session.get("cache_saved_at", "")
+    saved_at_fmt = ""
+    if saved_at_raw:
+        try:
+            dt = datetime.datetime.fromisoformat(saved_at_raw)
+            saved_at_fmt = dt.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            pass
+
     return render_template_string(
         CALENDAR_TEMPLATE,
         tracks_json=tracks_json,
         display_name=session.get("display_name", ""),
+        cache_saved_at=saved_at_fmt,
     )
 
 # ─────────────────────────────────────────────
 # ROTA: logout
 # ─────────────────────────────────────────────
+@app.route("/refresh")
+def refresh():
+    """Apaga o cache e força nova coleta."""
+    sid = session.get("sid")
+    if sid:
+        path = cache_path(sid)
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"[CACHE] Removido {path}", flush=True)
+        tracks_store.pop(sid, None)
+        progress_queues.pop(sid, None)
+    # mantém a sessão mas força nova coleta
+    access_token = session.get("token")
+    if not access_token:
+        return redirect("/")
+    sp   = spotipy.Spotify(auth=access_token)
+    try:
+        user = sp.current_user()
+    except Exception:
+        return redirect("/logout")
+    progress_queues[sid] = queue.Queue()
+    tracks_store[sid]    = None
+    threading.Thread(
+        target=collect_tracks,
+        args=(access_token, sid, session.get("display_name", "")),
+        daemon=True
+    ).start()
+    return redirect("/progress")
+
 @app.route("/logout")
 def logout():
     sid = session.get("sid")
@@ -700,6 +776,43 @@ def logout():
         progress_queues.pop(sid, None)
     session.clear()
     return redirect("/")
+
+@app.route("/debug/tracks")
+def debug_tracks():
+    """Mostra as primeiras músicas e quantas batem com o mês/dia atual."""
+    import datetime
+    sid = session.get("sid")
+    if not sid or sid not in tracks_store:
+        return jsonify({"error": "sem dados"})
+    tracks = tracks_store[sid] or []
+    now = datetime.datetime.utcnow()
+    cur_month = now.month - 1  # JS usa 0-indexed
+    cur_year  = now.year
+
+    matches = []
+    for t in tracks:
+        added = t.get("added_at", "")
+        try:
+            d = datetime.datetime.fromisoformat(added.replace("Z", "+00:00"))
+            if d.month - 1 == cur_month and d.year != cur_year:
+                matches.append({
+                    "name":     t["name"],
+                    "added_at": added,
+                    "month":    d.month,
+                    "day":      d.day,
+                    "year":     d.year,
+                })
+        except Exception as e:
+            pass
+
+    return jsonify({
+        "cur_month_js": cur_month,
+        "cur_year":     cur_year,
+        "total_tracks": len(tracks),
+        "matches_this_month": len(matches),
+        "sample_matches": matches[:10],
+        "sample_added_at": [t.get("added_at") for t in tracks[:5]],
+    })
 
 @app.route("/debug")
 def debug():

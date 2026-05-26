@@ -2,3 +2,5 @@ musicas_data orig.xlsx
 spotify_memory_calendar.html
 .cache
 .env
+cache
+venv
