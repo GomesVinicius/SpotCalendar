@@ -247,6 +247,16 @@ CALENDAR_TEMPLATE = """<!DOCTYPE html>
 html,body{height:100%;overflow:hidden}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f0;
      display:flex;flex-direction:column;height:100vh;padding:14px 18px 10px}
+.cover-wrap.spotify-current-year{
+  border:2px dotted #50c7c7;
+  box-shadow:
+    0 0 8px rgba(29,185,84,.45),
+    0 0 0 1px rgba(29,185,84,.25);
+}
+.cover-wrap.spotify-current-year{
+  border:2px dotted #50c7c7;
+  box-shadow:0 0 0 1px rgba(29,185,84,.35);
+}
 .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-shrink:0}
 .brand{color:#1DB954;font-size:22px}
 .label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#aaa;margin-bottom:2px}
@@ -528,7 +538,10 @@ function buildCalendar() {
   const byDay={};
   TRACKS.forEach(t=>{
     const d=new Date(t.added_at), tm=d.getUTCMonth(), td=d.getUTCDate(), ty=d.getUTCFullYear();
-    if(tm===month && ty!==year){ if(!byDay[td])byDay[td]=[]; byDay[td].push({...t,year:ty}); }
+    if(tm===month)
+      { if(!byDay[td])byDay[td]=[];
+      byDay[td].push({...t,year:ty}); 
+    }
   });
   Object.values(byDay).forEach(a=>a.sort((a,b)=>b.year-a.year));
   const grid=document.getElementById('cal-grid');
@@ -547,8 +560,15 @@ function buildCalendar() {
       covers.className='covers '+(songs.length===1?'single':'multi');
       covers.style.gridTemplateColumns=`repeat(${cols},1fr)`;
       songs.slice(0,showImgs).forEach(s=>{
-        const wrap=document.createElement('div'); wrap.className='cover-wrap';
-        const img=document.createElement('img'); img.src=s.image; img.alt=s.name;
+        const wrap=document.createElement('div');
+        
+        const isCurrentYear = s.year === nowReal.getFullYear();
+        console.log(`Construindo cover para ${s.name} (${s.year}) — current year? ${isCurrentYear}`);
+        wrap.className = 'cover-wrap' + (isCurrentYear ? ' spotify-current-year' : '');
+
+        const img=document.createElement('img');
+        img.src=s.image;
+        img.alt=s.name;
         wrap.appendChild(img);
         wrap.addEventListener('mouseenter',()=>showTooltip(img,s));
         wrap.addEventListener('mouseleave',hideTooltip);
