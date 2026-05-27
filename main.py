@@ -257,6 +257,12 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
   border:2px dotted #50c7c7;
   box-shadow:0 0 0 1px rgba(29,185,84,.35);
 }
+.modal-item.spotify-current-year{
+  border:2px dotted #50c7c7;
+  box-shadow:
+    0 0 10px rgba(29,185,84,.35),
+    0 0 0 1px rgba(29,185,84,.2);
+}
 .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-shrink:0}
 .brand{color:#1DB954;font-size:22px}
 .label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#aaa;margin-bottom:2px}
@@ -506,7 +512,10 @@ function openModal(day, songs) {
   mg.innerHTML='';
   songs.forEach(s => {
     const item = document.createElement('div');
-    item.className='modal-item';
+
+    const isCurrentYear = s.year === nowReal.getFullYear();
+
+    item.className = 'modal-item' + (isCurrentYear ? ' spotify-current-year' : '');
     item.innerHTML=`<img src="${s.image}" alt="${s.name}">
       <div class="modal-item-info">
         <div class="modal-item-name">${s.name}</div>
