@@ -4,3 +4,4 @@ spotify_memory_calendar.html
 .env
 cache
 venv
+__pycache__/

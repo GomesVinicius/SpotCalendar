@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coletando músicas…</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f0;
+     min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#272626;border:1px solid #333;border-radius:20px;padding:48px 40px;
+      max-width:420px;width:90%;text-align:center}
+.logo{color:#1DB954;font-size:44px;margin-bottom:20px;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+h1{font-size:20px;font-weight:700;color:#fff;margin-bottom:8px}
+.sub{font-size:13px;color:#aaa;margin-bottom:28px;line-height:1.6}
+.bar-wrap{background:#1a1a1a;border-radius:50px;height:6px;overflow:hidden;margin-bottom:20px}
+.bar{height:100%;background:#1DB954;border-radius:50px;width:5%;
+     animation:indeterminate 1.4s ease-in-out infinite}
+@keyframes indeterminate{
+  0%{width:5%;margin-left:0}
+  50%{width:40%;margin-left:30%}
+  100%{width:5%;margin-left:95%}
+}
+.status{font-size:12px;color:#666;min-height:18px}
+.gh-link{margin-top:20px;font-size:11px}
+.gh-link a{color:#555;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:color .15s}
+.gh-link a:hover{color:#aaa}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo"><i class="ti ti-brand-spotify"></i></div>
+  <h1>Coletando suas músicas</h1>
+  <div class="sub">Estamos lendo todas as suas playlists do Spotify.<br>Isso pode levar alguns segundos.</div>
+  <div class="bar-wrap"><div class="bar"></div></div>
+  <div class="status" id="status">Aguardando...</div>
+  <div class="gh-link"><a href=https://github.com/GomesVinicius/SpotCalendar" target="_blank" rel="noopener"><i class="ti ti-brand-github"></i>
+    <span style="color:#7600de">GomesVinicius</span>
+  </a></div>
+</div>
+<script>
+const USER_ID = '{{ user_id }}';
+const LS_KEY  = 'spotify_cal_' + USER_ID;
+const FORCE   = '{{ force }}' === 'true';
+
+function hasLocalCache() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    return data && data.tracks && data.tracks.length > 0;
+  } catch(e) { return false; }
+}
+
+function doCollect() {
+  document.getElementById('status').textContent = 'Conectando ao Spotify...';
+  fetch('/api/collect', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        document.getElementById('status').textContent = 'Erro: ' + data.error;
+      } else {
+        // Salva as tracks no localStorage aqui — servidor não guarda nada
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify({
+            user_id:  USER_ID,
+            saved_at: new Date().toISOString(),
+            tracks:   data.tracks,
+          }));
+          console.log('[LS] Salvo', data.total, 'músicas');
+        } catch(e) {
+          console.warn('[LS] Erro ao salvar no localStorage:', e);
+        }
+        document.getElementById('status').textContent = data.total + ' músicas salvas!';
+        window.location.href = '/calendar';
+      }
+    })
+    .catch(() => {
+      document.getElementById('status').textContent = 'Erro de conexão. Tente novamente.';
+    });
+}
+
+// Se já tem cache local e não é um refresh forçado, vai direto pro calendário
+if (!FORCE && hasLocalCache()) {
+  document.getElementById('status').textContent = 'Cache encontrado, carregando...';
+  window.location.href = '/calendar';
+} else {
+  doCollect();
+}
+</script>
+</body>
+</html>

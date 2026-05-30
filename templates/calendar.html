@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spotify Memory Calendar</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f0;
+     display:flex;flex-direction:column;height:100vh;padding:14px 18px 10px}
+
+/* ── Current year highlight ── */
+.cover-wrap.spotify-current-year{
+  border:2px outset #1DB954;
+  box-shadow:
+    0 0 8px rgba(29,185,84,.45),
+    0 0 0 1px rgba(35, 117, 224, 0.35);
+}
+.cover-wrap.spotify-current-year{
+  border:2px outset #1DB954;
+  box-shadow:0 0 0 1px rgba(35, 117, 224, 0.35);
+}
+.modal-item.spotify-current-year{
+  border:2px outset #1DB954;
+  box-shadow:
+    0 0 10px rgba(35, 117, 224, 0.35),
+    0 0 0 1px rgba(35, 117, 224, 0.35);
+}
+
+/* ── Header ── */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-shrink:0;gap:8px}
+.header-left{display:flex;align-items:center;gap:10px;min-width:0}
+.header-right{display:flex;align-items:center;gap:8px}
+.brand{color:#1DB954;font-size:22px;flex-shrink:0}
+.label{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#aaa;margin-bottom:2px}
+.user-name{font-size:11px;color:#1DB954;font-weight:600}
+.cache-info{font-size:10px;color:#555}
+.month-name{font-size:24px;font-weight:700;color:#fff;line-height:1.1}
+.legend{font-size:11px;color:#ccc;letter-spacing:.04em}
+
+/* ── Nav ── */
+.nav{display:flex;align-items:center;gap:6px}
+.nav-btn{background:#2a2a2a;border:1px solid #3a3a3a;color:#ddd;width:34px;height:34px;
+         border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+         font-size:16px;transition:background .15s,color .15s;flex-shrink:0}
+.nav-btn:hover{background:#1DB954;color:#000;border-color:#1DB954}
+.nav-today{background:#2a2a2a;border:1px solid #3a3a3a;color:#ddd;height:34px;padding:0 14px;
+           border-radius:8px;cursor:pointer;font-size:11px;letter-spacing:.08em;
+           text-transform:uppercase;transition:background .15s,color .15s;flex-shrink:0}
+.nav-today:hover{background:#333;color:#fff}
+
+/* ── Action buttons ── */
+.btn-action{background:none;border:1px solid #3a3a3a;color:#888;height:34px;padding:0 12px;
+            border-radius:8px;cursor:pointer;font-size:11px;text-decoration:none;
+            display:flex;align-items:center;gap:5px;transition:border-color .15s,color .15s;white-space:nowrap;flex-shrink:0}
+.btn-action.refresh:hover{border-color:#1DB954;color:#1DB954}
+.btn-action.export:hover{border-color:#63b3ed;color:#63b3ed}
+.btn-action.logout:hover{border-color:#e05c5c;color:#e05c5c}
+.export-wrap{position:relative}
+.export-menu{position:absolute;top:calc(100% + 6px);right:0;background:#1e1e1e;border:1px solid #3a3a3a;
+             border-radius:10px;overflow:hidden;z-index:500;display:none;min-width:130px;
+             box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.export-menu.open{display:block}
+.export-menu button{width:100%;background:none;border:none;color:#ccc;font-size:12px;padding:10px 14px;
+                    text-align:left;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .12s}
+.export-menu button:hover{background:#2a2a2a;color:#fff}
+.export-menu button i{font-size:14px;color:#888}
+.export-menu button:hover i{color:#63b3ed}
+
+/* ── Desktop calendar ── */
+.weekdays{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:5px;flex-shrink:0}
+.wd{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#aaa;text-align:center;padding:4px 0}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;flex:1;min-height:0}
+.day{border-radius:10px;border:1px solid #2e2e2e;padding:7px;background:#272626;
+     display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;
+     transition:border-color .15s;scrollbar-width:thin;scrollbar-color:#3a3a3a transparent}
+.day::-webkit-scrollbar{width:3px}
+.day::-webkit-scrollbar-thumb{background:#3a3a3a;border-radius:2px}
+.day:hover{border-color:#444}
+.day.empty{border-color:transparent;background:transparent;overflow:hidden}
+.day.today{border-color:#1DB954}
+.day-num{font-size:12px;color:#ddd;margin-bottom:5px;flex-shrink:0;font-variant-numeric:tabular-nums;font-weight:500}
+.day.today .day-num{color:#1DB954;font-weight:700}
+.covers{display:grid;gap:3px}
+.cover-wrap{position:relative;cursor:pointer;border-radius:5px;overflow:hidden;width:100%}
+.cover-wrap img{display:block;width:100%;height:100%;object-fit:cover;border-radius:5px;transition:transform .15s,opacity .15s}
+.covers.single .cover-wrap{aspect-ratio:unset}
+.covers.single .cover-wrap img{height:auto;max-height:100px}
+.covers.multi .cover-wrap{aspect-ratio:1}
+.cover-wrap:hover img{transform:scale(1.08);opacity:.75}
+.more-btn{font-size:15px;font-weight:700;background:#1DB954;border:none;border-radius:5px;
+          color:#000;cursor:pointer;transition:background .12s,transform .1s;
+          display:flex;align-items:center;justify-content:center;width:100%;aspect-ratio:1;letter-spacing:-.5px}
+.more-btn:hover{background:#1ed760;transform:scale(1.05)}
+
+/* ── Mobile calendar cell (oculto por padrão) ── */
+.day-dot{display:none}
+
+/* ── Tooltip ── */
+.tooltip{position:fixed;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:10px;
+         padding:0;pointer-events:none;opacity:0;transition:opacity .1s;z-index:9999;
+         min-width:200px;max-width:260px;overflow:hidden}
+.tooltip.visible{opacity:1}
+.tooltip-img{width:100%;aspect-ratio:1;object-fit:cover;display:block}
+.tooltip-body{padding:10px 12px}
+.tip-song{display:block;font-weight:700;font-size:13px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tip-artist{display:block;font-size:12px;color:#1DB954;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.tip-divider{display:block;height:1px;background:#2e2e2e;margin:8px 0}
+.tip-row{display:flex;align-items:center;gap:6px;margin-top:5px}
+.tip-row i{font-size:13px;color:#888;flex-shrink:0}
+.tip-label{font-size:10px;color:#888;display:block;margin-bottom:1px;text-transform:uppercase;letter-spacing:.06em}
+.tip-value{font-size:11px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.year-badge{display:inline-block;font-size:12px;font-weight:700;border-radius:5px;padding:2px 7px;letter-spacing:.03em;line-height:1.5}
+.modal-item-year-badge{display:inline-block;font-size:12px;font-weight:700;border-radius:5px;padding:2px 7px;letter-spacing:.03em;line-height:1.5;margin-top:6px}
+
+/* ── Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:10000;display:none;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:#272626;border:1px solid #3a3a3a;border-radius:16px;padding:24px;
+       max-width:720px;width:92vw;max-height:82vh;overflow-y:auto}
+.modal-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px}
+.modal-title{font-size:17px;font-weight:700;color:#fff}
+.modal-date{font-size:12px;color:#1DB954;margin-top:3px}
+.modal-close{background:none;border:1px solid #444;color:#ddd;width:32px;height:32px;
+             border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;
+             justify-content:center;transition:background .12s;flex-shrink:0}
+.modal-close:hover{background:#333;color:#fff}
+.modal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}
+.modal-item{cursor:pointer;border-radius:10px;overflow:hidden;background:#2e2e2e;
+            border:1px solid #3a3a3a;transition:border-color .15s,transform .12s}
+.modal-item:hover{border-color:#1DB954;transform:scale(1.03)}
+.modal-item img{width:100%;aspect-ratio:1;object-fit:cover;display:block}
+.modal-item-info{padding:10px}
+.modal-item-name{font-size:12px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modal-item-artist{font-size:11px;color:#1DB954;margin-top:2px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modal-item-divider{height:1px;background:#3a3a3a;margin:8px 0}
+.modal-item-row{display:flex;align-items:flex-start;gap:5px;margin-top:5px}
+.modal-item-row i{font-size:12px;color:#888;flex-shrink:0;margin-top:1px}
+.modal-item-label{font-size:9px;color:#888;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:1px}
+.modal-item-value{font-size:10px;color:#ccc;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+
+/* ── Tablet (≤900px): esconde texto dos botões ── */
+@media(max-width:900px){
+  body{padding:10px 12px 8px}
+  .month-name{font-size:18px}
+  .legend{display:none}
+  .btn-action span{display:none}
+  .btn-action{padding:0 10px;gap:0}
+  .nav-today{padding:0 10px;font-size:10px}
+}
+
+/* ── Mobile (≤600px): layout compacto ── */
+@media(max-width:600px){
+  html,body{height:100%;overflow:hidden}
+  body{padding:8px 10px 8px;height:100vh}
+
+  /* Header compacto: tudo em uma linha só */
+  .header{flex-wrap:nowrap;margin-bottom:6px}
+  .header-left{flex:1;min-width:0}
+  .label{display:none}
+  .cache-info{display:none}
+  .brand{font-size:18px}
+  .month-name{font-size:15px}
+  .user-name{font-size:10px}
+  .header-right{gap:4px}
+  .nav-btn{width:28px;height:28px;font-size:13px}
+  .nav-today{height:28px;font-size:9px;padding:0 7px}
+  .btn-action{height:28px;padding:0 7px}
+
+  /* Dias da semana menores */
+  .weekdays{gap:3px;margin-bottom:3px}
+  .wd{font-size:9px;padding:2px 0;letter-spacing:0}
+
+  /* Grid: células quadradas compactas */
+  .grid{gap:3px;grid-auto-rows:1fr}
+
+  /* Célula mobile: limpa, só número + dot */
+  .day{padding:5px 4px;border-radius:8px;overflow:hidden;align-items:center;cursor:pointer;
+       justify-content:space-between}
+  .day-num{font-size:12px;margin-bottom:0;font-weight:600;line-height:1}
+
+  /* Esconde as covers no mobile — usa dot indicator */
+  .covers{display:none}
+
+  /* Dot indicator: bolinha verde com contador */
+  .day-dot{display:flex;align-items:center;justify-content:center;
+           background:#1DB954;color:#000;font-size:9px;font-weight:700;
+           border-radius:50%;width:18px;height:18px;line-height:1;flex-shrink:0}
+  .day-dot.many{background:#1ed760;font-size:8px}
+  .day.today{border-color:#1DB954}
+  .day.today .day-num{color:#1DB954}
+
+  /* Modal mobile: ocupa mais espaço */
+  .modal{padding:16px;border-radius:12px}
+  .modal-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <i class="ti ti-brand-spotify brand"></i>
+    <div>
+      <div class="label">memórias musicais</div>
+      <div class="user-name" id="hdr-user">—</div>
+      <div class="cache-info" id="hdr-cache"></div>
+      <div class="month-name" id="month-name">—</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="legend" id="legend"></div>
+    <div class="nav">
+      <button class="nav-btn" id="prev-year"  title="Ano anterior"><i class="ti ti-chevrons-left"></i></button>
+      <button class="nav-btn" id="prev-month" title="Mês anterior"><i class="ti ti-chevron-left"></i></button>
+      <button class="nav-today" id="go-today">Hoje</button>
+      <button class="nav-btn" id="next-month" title="Próximo mês"><i class="ti ti-chevron-right"></i></button>
+      <button class="nav-btn" id="next-year"  title="Próximo ano"><i class="ti ti-chevrons-right"></i></button>
+    </div>
+    <a class="btn-action refresh" href="/refresh" title="Atualizar"><i class="ti ti-refresh"></i><span>&nbsp;Atualizar</span></a>
+    <div class="export-wrap">
+      <button class="btn-action export" id="btn-export" title="Exportar"><i class="ti ti-download"></i><span>&nbsp;Exportar</span></button>
+      <div class="export-menu" id="export-menu">
+        <button id="export-json"><i class="ti ti-file-type-json"></i> JSON</button>
+        <button id="export-csv"><i class="ti ti-file-type-csv"></i> CSV</button>
+      </div>
+    </div>
+    <a class="btn-action logout" href="/logout" title="Sair"><i class="ti ti-logout"></i><span>&nbsp;Sair</span></a>
+  </div>
+</div>
+
+<div class="weekdays">
+  <div class="wd">dom</div><div class="wd">seg</div><div class="wd">ter</div>
+  <div class="wd">qua</div><div class="wd">qui</div><div class="wd">sex</div><div class="wd">sáb</div>
+</div>
+<div class="grid" id="cal-grid"></div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div><div class="modal-title" id="modal-title"></div><div class="modal-date" id="modal-date"></div></div>
+      <button class="modal-close" id="modal-close"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="modal-grid" id="modal-grid"></div>
+  </div>
+</div>
+<div class="tooltip" id="global-tooltip"></div>
+
+<script>
+// ── localStorage ──────────────────────────────────────────────────
+/* eslint-disable */
+// prettier-ignore
+const LS_KEY = 'spotify_cal_{{ user_id }}'; // jinja2
+/* eslint-enable */
+
+function lsSave(data){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(data)); }
+  catch(e){ console.warn('[LS] Erro ao salvar:', e); }
+}
+function lsLoad(){
+  try{ const r=localStorage.getItem(LS_KEY); return r?JSON.parse(r):null; }
+  catch(e){ return null; }
+}
+
+// ── Dados ─────────────────────────────────────────────────────────
+/* eslint-disable */
+// prettier-ignore
+const SERVER_TRACKS = {{ tracks_json | safe }}; // jinja2
+// prettier-ignore
+const USER_ID = '{{ user_id }}'; // jinja2
+// prettier-ignore
+const DISPLAY_NAME = '{{ display_name }}'; // jinja2
+/* eslint-enable */
+
+let TRACKS = [], cacheInfo = '';
+if(SERVER_TRACKS !== null){
+  lsSave({user_id:USER_ID, saved_at:new Date().toISOString(), tracks:SERVER_TRACKS});
+  TRACKS = SERVER_TRACKS; cacheInfo = 'dados atualizados agora';
+} else {
+  const cached = lsLoad();
+  if(cached && cached.tracks?.length > 0){
+    TRACKS = cached.tracks;
+    const dt = new Date(cached.saved_at);
+    cacheInfo = 'cache de '+dt.toLocaleDateString('pt-BR')+' '+dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  } else {
+    window.location.href = '/refresh';
+  }
+}
+document.getElementById('hdr-user').textContent  = DISPLAY_NAME;
+document.getElementById('hdr-cache').textContent = cacheInfo;
+
+// ── URL helpers ───────────────────────────────────────────────────
+const BASE_SONG  = 'https://open.spotify.com/track/';
+const BASE_IMAGE = 'https://i.scdn.co/image/';
+function songUrl(s)  { return BASE_SONG  + s.sid; }
+function imageUrl(s) { return BASE_IMAGE + s.iid; }
+
+// ── Exportação ────────────────────────────────────────────────────
+function tracksForExport(){
+  return TRACKS.map(t=>({
+    id:t.id, name:t.name, artists:t.artists, playlist:t.playlist,
+    added_at:t.added_at, url_song:BASE_SONG+t.sid, image:BASE_IMAGE+t.iid,
+  }));
+}
+function downloadFile(content, filename, mime){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content],{type:mime}));
+  a.download = filename; a.click();
+}
+function exportJSON(){ downloadFile(JSON.stringify(tracksForExport(),null,2),'spotify_memories.json','application/json'); }
+function exportCSV(){
+  const cols=['id','name','artists','playlist','added_at','url_song','image'];
+  const esc=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+  const rows=[cols.join(','), ...tracksForExport().map(t=>cols.map(c=>esc(t[c])).join(','))];
+  downloadFile(rows.join('\n'),'spotify_memories.csv','text/csv;charset=utf-8;');
+}
+const btnExport=document.getElementById('btn-export'), exportMenu=document.getElementById('export-menu');
+btnExport.addEventListener('click',e=>{e.stopPropagation();exportMenu.classList.toggle('open');});
+document.addEventListener('click',()=>exportMenu.classList.remove('open'));
+document.getElementById('export-json').addEventListener('click',()=>{exportJSON();exportMenu.classList.remove('open');});
+document.getElementById('export-csv') .addEventListener('click',()=>{exportCSV(); exportMenu.classList.remove('open');});
+
+// ── Detecta mobile ────────────────────────────────────────────────
+const isMobile = () => window.innerWidth <= 600;
+
+// ── Calendário helpers ────────────────────────────────────────────
+const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+               'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const nowReal = new Date();
+let curYear = nowReal.getFullYear(), curMonth = nowReal.getMonth();
+const tooltip = document.getElementById('global-tooltip');
+
+const ALL_YEARS = [...new Set(TRACKS.map(t=>new Date(t.added_at).getUTCFullYear()))];
+const MIN_YEAR  = Math.min(...ALL_YEARS), MAX_YEAR = Math.max(...ALL_YEARS);
+
+function yearColor(year){
+  if(MIN_YEAR===MAX_YEAR) return{bg:'rgba(99,179,237,.18)',text:'#63b3ed'};
+  const t=(year-MIN_YEAR)/(MAX_YEAR-MIN_YEAR);
+  let r,g,b;
+  if(t<.5){const tt=t/.5;r=220;g=Math.round(80+tt*140);b=30;}
+  else{const tt=(t-.5)/.5;r=Math.round(220-tt*160);g=Math.round(220-tt*90);b=Math.round(30+tt*210);}
+  return{bg:`rgba(${r},${g},${b},.18)`,text:`rgb(${r},${g},${b})`};
+}
+function yearBadge(year,cls){
+  const{bg,text}=yearColor(year);
+  return`<span class="${cls||'year-badge'}" style="background:${bg};color:${text}">${year}</span>`;
+}
+function formatDate(iso){
+  return new Date(iso).toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric',timeZone:'UTC'});
+}
+
+// ── Tooltip (desktop) ─────────────────────────────────────────────
+function showTooltip(el,s){
+  tooltip.innerHTML=`
+    <img class="tooltip-img" src="${imageUrl(s)}" alt="${s.name}">
+    <div class="tooltip-body">
+      <span class="tip-song">${s.name}</span>
+      <span class="tip-artist">${s.artists||'Artista desconhecido'}</span>
+      ${yearBadge(s.year)}
+      <span class="tip-divider"></span>
+      <div class="tip-row"><i class="ti ti-calendar"></i><div><span class="tip-label">Adicionado em</span><span class="tip-value">${formatDate(s.added_at)}</span></div></div>
+      <div class="tip-row"><i class="ti ti-music"></i><div><span class="tip-label">Playlist</span><span class="tip-value">${s.playlist}</span></div></div>
+    </div>`;
+  tooltip.classList.add('visible');
+  requestAnimationFrame(()=>{
+    const r=el.getBoundingClientRect(),tw=tooltip.offsetWidth,th=tooltip.offsetHeight;
+    let top=r.top-th-8, left=r.left+r.width/2-tw/2;
+    if(top<8)top=r.bottom+8; if(left<8)left=8;
+    if(left+tw>innerWidth-8)left=innerWidth-tw-8;
+    tooltip.style.top=top+'px'; tooltip.style.left=left+'px';
+  });
+}
+function hideTooltip(){ tooltip.classList.remove('visible'); }
+
+// ── Modal ─────────────────────────────────────────────────────────
+function openModal(day, songs){
+  document.getElementById('modal-title').textContent = songs.length+' música'+(songs.length>1?'s':'')+' neste dia';
+  document.getElementById('modal-date').textContent  = day+' de '+MESES[curMonth]+' — vários anos';
+  const mg=document.getElementById('modal-grid');
+  mg.innerHTML='';
+  songs.forEach(s=>{
+    const item=document.createElement('div');
+    item.className='modal-item'+(s.year===nowReal.getFullYear()?' spotify-current-year':'');
+    item.innerHTML=`<img src="${imageUrl(s)}" alt="${s.name}">
+      <div class="modal-item-info">
+        <div class="modal-item-name">${s.name}</div>
+        <div class="modal-item-artist">${s.artists||'Artista desconhecido'}</div>
+        ${yearBadge(s.year,'modal-item-year-badge')}
+        <div class="modal-item-divider"></div>
+        <div class="modal-item-row"><i class="ti ti-calendar"></i><div><span class="modal-item-label">Adicionado em</span><span class="modal-item-value">${formatDate(s.added_at)}</span></div></div>
+        <div class="modal-item-row"><i class="ti ti-music"></i><div><span class="modal-item-label">Playlist</span><span class="modal-item-value">${s.playlist}</span></div></div>
+      </div>`;
+    item.addEventListener('click',()=>window.open(songUrl(s),'_blank'));
+    mg.appendChild(item);
+  });
+  document.getElementById('modal-overlay').classList.add('open');
+}
+document.getElementById('modal-close').addEventListener('click',()=>document.getElementById('modal-overlay').classList.remove('open'));
+document.getElementById('modal-overlay').addEventListener('click',e=>{
+  if(e.target===document.getElementById('modal-overlay')) document.getElementById('modal-overlay').classList.remove('open');
+});
+
+// ── Build calendar ────────────────────────────────────────────────
+const MAX_VISIBLE=6;
+function getCols(n){const s=Math.min(n,MAX_VISIBLE);if(s===1)return 1;if(s<=4)return 2;return 3;}
+
+function buildCalendar(){
+  const year=curYear, month=curMonth;
+  const isCur=(nowReal.getFullYear()===year && nowReal.getMonth()===month);
+  const mobile=isMobile();
+  document.getElementById('month-name').textContent=MESES[month]+' '+year;
+
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const firstDow   =new Date(year,month,1).getDay();
+
+  // Agrupa tracks por dia
+  const byDay={};
+  TRACKS.forEach(t=>{
+    const d=new Date(t.added_at),tm=d.getUTCMonth(),td=d.getUTCDate(),ty=d.getUTCFullYear();
+    if(tm===month){ if(!byDay[td])byDay[td]=[]; byDay[td].push({...t,year:ty}); }
+  });
+  Object.values(byDay).forEach(a=>a.sort((a,b)=>b.year-a.year));
+
+  const grid=document.getElementById('cal-grid');
+  grid.innerHTML='';
+
+  // Células vazias antes do dia 1
+  for(let i=0;i<firstDow;i++){
+    const e=document.createElement('div'); e.className='day empty'; grid.appendChild(e);
+  }
+
+  for(let d=1;d<=daysInMonth;d++){
+    const cell=document.createElement('div');
+    const isToday=isCur && d===nowReal.getDate();
+    cell.className='day'+(isToday?' today':'');
+
+    const num=document.createElement('span');
+    num.className='day-num'; num.textContent=d; cell.appendChild(num);
+
+    const songs=byDay[d]||[];
+
+    if(mobile){
+      // ── Modo mobile: dot indicator, toque abre modal ──
+      if(songs.length>0){
+        const dot=document.createElement('div');
+        dot.className='day-dot'+(songs.length>9?' many':'');
+        dot.textContent=songs.length>99?'99+':songs.length;
+        cell.appendChild(dot);
+        cell.addEventListener('click',()=>openModal(d,songs));
+      }
+    } else {
+      // ── Modo desktop: covers ──
+      if(songs.length>0){
+        const hasMore=songs.length>MAX_VISIBLE;
+        const showImgs=hasMore?MAX_VISIBLE-1:songs.length;
+        const covers=document.createElement('div');
+        covers.className='covers '+(songs.length===1?'single':'multi');
+        covers.style.gridTemplateColumns=`repeat(${getCols(songs.length)},1fr)`;
+        songs.slice(0,showImgs).forEach(s=>{
+          const wrap=document.createElement('div');
+          wrap.className='cover-wrap'+(s.year===nowReal.getFullYear()?' spotify-current-year':'');
+          const img=document.createElement('img'); img.src=imageUrl(s); img.alt=s.name;
+          wrap.appendChild(img);
+          wrap.addEventListener('mouseenter',()=>showTooltip(img,s));
+          wrap.addEventListener('mouseleave',hideTooltip);
+          wrap.addEventListener('click',ev=>{ev.stopPropagation();window.open(songUrl(s),'_blank');});
+          covers.appendChild(wrap);
+        });
+        if(hasMore){
+          const more=document.createElement('button'); more.className='more-btn';
+          more.textContent='+'+(songs.length-showImgs);
+          more.addEventListener('click',ev=>{ev.stopPropagation();openModal(d,songs);});
+          covers.appendChild(more);
+        }
+        cell.appendChild(covers);
+      }
+    }
+
+    grid.appendChild(cell);
+  }
+
+  const total=Object.values(byDay).reduce((a,b)=>a+b.length,0);
+  document.getElementById('legend').textContent=
+    total>0?total+' música'+(total>1?'s':'')+' neste mês':'nenhuma música neste mês';
+}
+
+document.getElementById('prev-month').addEventListener('click',()=>{curMonth--;if(curMonth<0){curMonth=11;curYear--;}buildCalendar();});
+document.getElementById('next-month').addEventListener('click',()=>{curMonth++;if(curMonth>11){curMonth=0;curYear++;}buildCalendar();});
+document.getElementById('prev-year') .addEventListener('click',()=>{curYear--;buildCalendar();});
+document.getElementById('next-year') .addEventListener('click',()=>{curYear++;buildCalendar();});
+document.getElementById('go-today')  .addEventListener('click',()=>{curYear=nowReal.getFullYear();curMonth=nowReal.getMonth();buildCalendar();});
+window.addEventListener('resize',buildCalendar);
+buildCalendar();
+</script>
+</body>
+</html>
