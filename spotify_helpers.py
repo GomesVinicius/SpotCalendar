@@ -38,11 +38,20 @@ def spotify_call(func, *args, **kwargs):
                 raise
 
 
+# Estado global de progresso (por user_id)
+_progress = {}  # user_id -> {"done": [...], "current": None, "total": 0, "finished": False}
+
+def get_progress(user_id):
+    return _progress.get(user_id, {"done": [], "current": None, "total": 0, "finished": False})
+
+
 def collect_tracks(access_token, user_id):
     """
     Coleta todas as músicas das playlists do usuário.
     Roda de forma SÍNCRONA — retorna a lista quando terminar.
     """
+    _progress[user_id] = {"done": [], "current": None, "total": 0, "finished": False}
+
     sp = spotipy.Spotify(auth=access_token)
     playlists_res = spotify_call(sp.current_user_playlists, limit=50)
     all_playlists = list(playlists_res["items"])
@@ -52,12 +61,15 @@ def collect_tracks(access_token, user_id):
 
     own = [p for p in all_playlists if p["owner"]["id"] == user_id]
     print(f"[COLLECT] {len(own)} playlists proprias encontradas", flush=True)
+    _progress[user_id]["total"] = len(own)
 
     songs = []
     for pl in own:
         print(f"[COLLECT] coletando: {pl['name']}", flush=True)
+        _progress[user_id]["current"] = pl["name"]
         try:
             offset = 0
+            pl_count = 0
             while True:
                 items = spotify_call(sp.playlist_items, pl["id"], offset=offset, limit=100)
                 for item in items["items"]:
@@ -72,9 +84,6 @@ def collect_tracks(access_token, user_id):
                             continue
                         img_url  = imgs[1]["url"] if len(imgs) > 1 else imgs[0]["url"]
                         song_url = (t.get("external_urls") or {}).get("spotify", "")
-                        # Salva apenas o ID final da URL para economizar espaço no localStorage
-                        # Ex: "https://open.spotify.com/track/ABC123" → "ABC123"
-                        # Ex: "https://i.scdn.co/image/XYZ" → "XYZ"
                         song_id  = song_url.rstrip("/").rsplit("/", 1)[-1] if song_url else ""
                         image_id = img_url.rstrip("/").rsplit("/", 1)[-1]  if img_url  else ""
                         songs.append({
@@ -88,6 +97,7 @@ def collect_tracks(access_token, user_id):
                             "sid":      song_id,
                             "iid":      image_id,
                         })
+                        pl_count += 1
                     except Exception as e:
                         print(f"[ITEM_ERR] {e}", flush=True)
                 if not items["next"]:
@@ -96,5 +106,10 @@ def collect_tracks(access_token, user_id):
         except Exception as e:
             print(f"[PL_ERR] {pl['name']}: {e}", flush=True)
 
+        # Marca playlist como concluída
+        _progress[user_id]["done"].append({"name": pl["name"], "total": pl_count})
+        _progress[user_id]["current"] = None
+
+    _progress[user_id]["finished"] = True
     print(f"[COLLECT] total: {len(songs)} músicas", flush=True)
     return songs

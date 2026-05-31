@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Política de Privacidade — Spotify Memory Calendar</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f0;
+     min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:48px 20px}
+
+.card{background:#272626;border:1px solid #333;border-radius:20px;padding:48px 44px;
+      max-width:680px;width:100%}
+
+/* Header */
+.back{display:inline-flex;align-items:center;gap:6px;color:#555;font-size:12px;
+      text-decoration:none;margin-bottom:28px;transition:color .15s}
+.back:hover{color:#aaa}
+.page-logo{color:#1DB954;font-size:36px;margin-bottom:12px}
+h1{font-size:22px;font-weight:700;color:#fff;margin-bottom:6px}
+.updated{font-size:11px;color:#555;margin-bottom:36px}
+
+/* Sections */
+.section{margin-bottom:32px}
+.section-title{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;
+               color:#fff;margin-bottom:10px}
+.section-title i{color:#1DB954;font-size:18px}
+p, li{font-size:13px;color:#aaa;line-height:1.75}
+ul{padding-left:18px;display:flex;flex-direction:column;gap:4px}
+
+/* Highlight box */
+.highlight{background:#1a2e1f;border:1px solid #1DB95433;border-radius:12px;
+           padding:16px 18px;margin-bottom:32px;display:flex;gap:14px;align-items:flex-start}
+.highlight i{color:#1DB954;font-size:20px;flex-shrink:0;margin-top:1px}
+.highlight p{color:#ccc}
+
+hr{border:none;border-top:1px solid #2e2e2e;margin-bottom:32px}
+
+/* Footer */
+.footer{margin-top:36px;padding-top:20px;border-top:1px solid #2e2e2e;
+        display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.footer-left{font-size:11px;color:#555}
+.footer-right{display:flex;align-items:center;gap:12px}
+.footer-right a{color:#555;text-decoration:none;font-size:11px;
+                display:inline-flex;align-items:center;gap:4px;transition:color .15s}
+.footer-right a:hover{color:#aaa}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <a class="back" href="/calendar"><i class="ti ti-arrow-left"></i> Voltar ao início</a>
+
+  <div class="page-logo"><i class="ti ti-shield-check"></i></div>
+  <h1>Política de Privacidade</h1>
+  <div class="updated">Última atualização: junho de 2025</div>
+
+  <div class="highlight">
+    <i class="ti ti-lock"></i>
+    <p><strong style="color:#1DB954">Resumo:</strong> O Spotify Memory Calendar não armazena nenhum dado seu em servidores. Tudo fica exclusivamente no seu próprio navegador.</p>
+  </div>
+
+  <div class="section">
+    <div class="section-title"><i class="ti ti-database"></i> Quais dados são coletados</div>
+    <p>Para funcionar, o aplicativo acessa via API do Spotify:</p>
+    <ul style="margin-top:10px">
+      <li>Nome de exibição da sua conta Spotify</li>
+      <li>Lista das suas playlists pessoais</li>
+      <li>Músicas de cada playlist (nome, artista, data de adição, capa do álbum)</li>
+    </ul>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-title"><i class="ti ti-device-desktop"></i> Onde os dados ficam</div>
+    <p>Nenhuma informação é enviada ou salva em servidores externos. Após a coleta, todos os dados são gravados exclusivamente no <strong style="color:#ddd">localStorage</strong> do seu navegador, no seu próprio dispositivo. O servidor descarta as informações imediatamente após repassá-las ao navegador.</p>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-title"><i class="ti ti-eye-off"></i> O que não fazemos</div>
+    <ul>
+      <li>Não compartilhamos seus dados com terceiros</li>
+      <li>Não usamos cookies de rastreamento</li>
+      <li>Não exibimos anúncios</li>
+      <li>Não criamos perfis de usuário</li>
+      <li>Não retemos seu token de acesso após o encerramento da sessão</li>
+    </ul>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-title"><i class="ti ti-brand-spotify"></i> Autenticação via Spotify</div>
+    <p>O login é feito pela própria infraestrutura de autenticação do Spotify (OAuth 2.0). Nunca temos acesso à sua senha. As permissões solicitadas são somente de leitura: <strong style="color:#ddd">playlist-read-private</strong> e <strong style="color:#ddd">playlist-read-collaborative</strong>.</p>
+  </div>
+
+  <hr>
+
+  <div class="section">
+    <div class="section-title"><i class="ti ti-trash"></i> Como apagar seus dados</div>
+    <p>Clique em <strong style="color:#ddd">Sair</strong> dentro do aplicativo — isso limpa automaticamente o localStorage e encerra a sessão. Você também pode revogar o acesso a qualquer momento em <a href="https://www.spotify.com/account/apps" target="_blank" rel="noopener" style="color:#1DB954;text-decoration:none">spotify.com/account/apps</a>.</p>
+  </div>
+
+  <div class="footer">
+    <span class="footer-left">Spotify Memory Calendar</span>
+    <div class="footer-right">
+      <a href="https://github.com/GomesVinicius" target="_blank" rel="noopener"><i class="ti ti-brand-github"></i> GomesVinicius</a>
+      <a href="/"><i class="ti ti-home"></i> Início</a>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

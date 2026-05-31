@@ -57,6 +57,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
             display:flex;align-items:center;gap:5px;transition:border-color .15s,color .15s;white-space:nowrap;flex-shrink:0}
 .btn-action.refresh:hover{border-color:#1DB954;color:#1DB954}
 .btn-action.export:hover{border-color:#63b3ed;color:#63b3ed}
+.btn-action.privacy:hover{border-color:#a78bfa;color:#a78bfa}
+.btn-action.github:hover{border-color:#e0e0e0;color:#e0e0e0}
 .btn-action.logout:hover{border-color:#e05c5c;color:#e05c5c}
 .export-wrap{position:relative}
 .export-menu{position:absolute;top:calc(100% + 6px);right:0;background:#1e1e1e;border:1px solid #3a3a3a;
@@ -157,14 +159,15 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
   body{padding:8px 10px 8px;height:100vh}
 
   /* Header compacto: tudo em uma linha só */
-  .header{flex-wrap:nowrap;margin-bottom:6px}
+  .header{flex-wrap:nowrap;margin-bottom:6px;}
   .header-left{flex:1;min-width:0}
+  .header-center{display:flex;}
+  .header-right{gap:4px}
   .label{display:none}
   .cache-info{display:none}
   .brand{font-size:18px}
   .month-name{font-size:15px}
   .user-name{font-size:10px}
-  .header-right{gap:4px}
   .nav-btn{width:28px;height:28px;font-size:13px}
   .nav-today{height:28px;font-size:9px;padding:0 7px}
   .btn-action{height:28px;padding:0 7px}
@@ -210,15 +213,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
       <div class="month-name" id="month-name">—</div>
     </div>
   </div>
-  <div class="header-right">
-    <div class="legend" id="legend"></div>
-    <div class="nav">
-      <button class="nav-btn" id="prev-year"  title="Ano anterior"><i class="ti ti-chevrons-left"></i></button>
-      <button class="nav-btn" id="prev-month" title="Mês anterior"><i class="ti ti-chevron-left"></i></button>
-      <button class="nav-today" id="go-today">Hoje</button>
-      <button class="nav-btn" id="next-month" title="Próximo mês"><i class="ti ti-chevron-right"></i></button>
-      <button class="nav-btn" id="next-year"  title="Próximo ano"><i class="ti ti-chevrons-right"></i></button>
-    </div>
+
+  <div class="header-center" style="display:flex; gap:5px;">
     <a class="btn-action refresh" href="/refresh" title="Atualizar"><i class="ti ti-refresh"></i><span>&nbsp;Atualizar</span></a>
     <div class="export-wrap">
       <button class="btn-action export" id="btn-export" title="Exportar"><i class="ti ti-download"></i><span>&nbsp;Exportar</span></button>
@@ -227,7 +223,20 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#1f1e1e;color:#f0f0f
         <button id="export-csv"><i class="ti ti-file-type-csv"></i> CSV</button>
       </div>
     </div>
+    <a class="btn-action privacy" href="/privacy" title="Política de Privacidade"><i class="ti ti-shield-check"></i><span>&nbsp;Privacidade</span></a>
+    <a class="btn-action github" href="https://github.com/GomesVinicius" target="_blank" rel="noopener" title="GitHub"><i class="ti ti-brand-github"></i><span>&nbsp;GitHub</span></a>
     <a class="btn-action logout" href="/logout" title="Sair"><i class="ti ti-logout"></i><span>&nbsp;Sair</span></a>
+  </div>
+
+  <div class="header-right">
+      <div class="legend" id="legend"></div>
+      <div class="nav">
+        <button class="nav-btn" id="prev-year"  title="Ano anterior"><i class="ti ti-chevrons-left"></i></button>
+        <button class="nav-btn" id="prev-month" title="Mês anterior"><i class="ti ti-chevron-left"></i></button>
+        <button class="nav-today" id="go-today">Hoje</button>
+        <button class="nav-btn" id="next-month" title="Próximo mês"><i class="ti ti-chevron-right"></i></button>
+        <button class="nav-btn" id="next-year"  title="Próximo ano"><i class="ti ti-chevrons-right"></i></button>
+    </div>
   </div>
 </div>
 
