@@ -79,7 +79,7 @@ Guarde esses dois valores — você vai precisar deles no passo seguinte.
 
 ---
 
-## Rodando o executável (.exe) (Mais prático)
+## Rodando o executável (.exe)
 
 > Não é necessário ter Python instalado.
 
