@@ -6,4 +6,3 @@ cache
 venv
 __pycache__/
 text.md
-build/
